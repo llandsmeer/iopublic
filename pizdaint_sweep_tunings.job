@@ -1,0 +1,15 @@
+#!/bin/bash -l
+#
+#SBATCH --job-name="io_sweep1"
+#SBATCH --nodes=1
+#SBATCH --constraint=gpu
+#SBATCH --ntasks-per-node=1
+#SBATCH --output=log/sweep_tunings.%j_%A-%a.o
+#SBATCH --error=log/sweep_tunings.%j_%A-%a.e
+#SBATCH --account=ich033
+#SBATCH --time=00:30:00
+#SBATCH --array=0-100
+
+python3 pizdaint_sweep_tunings.py decay2 ${SLURM_ARRAY_TASK_ID}
+
+#partition=debug
