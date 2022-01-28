@@ -12,6 +12,7 @@ import os
 import math
 import json
 import collections
+import numpy as np
 import arbor
 
 ARBOR_BUILD_CATALOGUE = 'arbor-build-catalogue'
@@ -36,7 +37,7 @@ def compile_smol_model():
                 needs_recompile = True
         if not needs_recompile:
             return arbor.load_catalogue(expected_fn)
-    res = subprocess.getoutput(f'{ARBOR_BUILD_CATALOGUE} smol smol_model')
+    res = subprocess.getoutput(f'{ARBOR_BUILD_CATALOGUE} -g cuda smol smol_model')
     path = res.split()[-1]
     print(res)
     assert path[0] == '/' and path.endswith('.so')
@@ -73,13 +74,7 @@ class TunedIOModel(arbor.recipe):
         # idmap: scaffold id to gid map
         self.idmap = {neuron.old_id:new_id for new_id, neuron in enumerate(self.neurons)}
         self.props = arbor.neuron_cable_properties()
-        self.cat = arbor.default_catalogue()
-        self.cat.extend(compile_smol_model(), '')
-        if noise != (('sigma', 0),):
-            # sadly we can't compile C++ mechanisms with build-catalogue
-            # so you have to use a arbor fork
-            self.cat.extend(arbor.EMC_catalogue(), '')
-        self.props.register(self.cat)
+        self.props.catalogue.extend(compile_smol_model(), '')
         self.tuning = tuning
         self.ggap = tuning['ggap']
         self.spikes = dict(spikes)
@@ -250,8 +245,7 @@ def simulate_tuned_network(selected, tfinal=10000, dt=0.025, gpu_id=0, spikes=()
     fn_network = f'{tuning["network"]}.gz'
     network = load_spacefilling_network(fn_network)
     recipe = TunedIOModel(network, tuning, spikes=spikes)
-    if context is None:
-        context = arbor.context(threads=8, gpu_id=gpu_id)
+    context = arbor.context(threads=8, gpu_id=gpu_id)
     domains = arbor.partition_load_balance(recipe, context)
     sim = arbor.simulation(recipe, domains, context)
     handles = [sim.sample((gid, 0), arbor.regular_schedule(1)) for gid in range(recipe.num_cells())]
