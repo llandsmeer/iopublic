@@ -234,7 +234,7 @@ def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=()):
     decor.discretization(policy)
     return arbor.cable_cell(tree, labels, decor)
 
-def simulate_tuned_network(selected, tfinal=10000, dt=0.025, gpu_id=0, spikes=()):
+def build_recipe(selected, spikes=()):
     #selected = '2021-12-08-shadow_averages_0.01_0.8_d1666304-c6fc-4346-a55d-a99b3aad55be'
     fn_tuned = f'tuned_networks/{selected}'
     tuning = json.load(open(fn_tuned))
@@ -245,6 +245,10 @@ def simulate_tuned_network(selected, tfinal=10000, dt=0.025, gpu_id=0, spikes=()
     fn_network = f'{tuning["network"]}.gz'
     network = load_spacefilling_network(fn_network)
     recipe = TunedIOModel(network, tuning, spikes=spikes)
+    return recipe
+
+def simulate_tuned_network(selected, tfinal=10000, dt=0.025, gpu_id=0, spikes=()):
+    recipe = build_recipe(selected, spikes=spikes)
     context = arbor.context(threads=8, gpu_id=gpu_id)
     domains = arbor.partition_load_balance(recipe, context)
     sim = arbor.simulation(recipe, domains, context)
