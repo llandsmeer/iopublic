@@ -32,11 +32,9 @@ def get_entropy(vsall):
             delta = (delta[np.triu_indices(len(delta), k = 1)] + np.pi) % (2*np.pi) - np.pi
         else: # just the phase
             delta = (tmp_phase[:,i] + np.pi) % (2*np.pi) - np.pi
-        p, edges = np.histogram(delta, range=(-np.pi, np.pi), bins=100, density=True)
-        p = p[p > 0]
-        p = p / p.sum()
-        S = -(p * np.log2(p)).sum()
-        #S = -(p*np.ma.log2(np.abs(p))).sum() # * NORMALIZATION CONSTANT!! WHICH ONE?
+        p, edges = np.histogram(delta, range=(-np.pi, np.pi), bins=30, density=True)
+        x  = (edges[:-1]+edges[1:])/2
+        S = -np.trapz(p * np.ma.log(p).filled(0), x)
         tmp_entropies.append(S)
         #tmp_time.append(t[i]/1e3)
 
@@ -61,25 +59,28 @@ def fit_curve(t, S, time_peak):
 #LOG_FILE = '/store/hbp/ich033/llandsme/analysis.data'
 
 SIM_ROOT = '/scratch/snx3000/llandsme/simulations/'
-ENTROPY_DIR = '/scratch/snx3000/llandsme/analysis/entropy'
+ENTROPY_DIR = '/scratch/snx3000/llandsme/analysis/entropy/'
 LOG_FILE = '/scratch/snx3000/llandsme/analysis.data'
 
 sims = os.listdir(SIM_ROOT)
 
 for sim in sims:
-    key = sim.split('.')[0]
-    sim_fn = os.path.join(SIM_ROOT, sim)
-    ent_fn = os.path.join(ENTROPY_DIR, sim)
-    if os.path.exists(ent_fn):
-        continue
-    f = np.load(sim_fn)
-    vs = np.array(f['vs'])
-    t = np.array(f['t'])
-    sim_data = json.loads(base64.urlsafe_b64decode(key))
-    first_spike = int(sorted(sim_data['spikes'])[0])
-    S = get_entropy(vs)
-    decay_ms = fit_curve(t, S, first_spike)
-    np.savez_compressed(ent_fn, key=key, S=S, t=t)
-    with open(LOG_FILE, 'a') as flog:
-        print(f'{key} decay1ms {decay_ms}', file=flog)
-    print(f'{key} decay1ms {decay_ms}')
+    try:
+        key = sim.split('.')[0]
+        sim_fn = os.path.join(SIM_ROOT, sim)
+        ent_fn = os.path.join(ENTROPY_DIR, sim)
+        if os.path.exists(ent_fn):
+            continue
+        f = np.load(sim_fn)
+        vs = np.array(f['vs'])
+        t = np.array(f['t'])
+        sim_data = json.loads(base64.urlsafe_b64decode(key))
+        first_spike = int(sorted(sim_data['spikes'])[0])
+        S = get_entropy(vs)
+        decay_ms = fit_curve(t, S, first_spike)
+        np.savez_compressed(ent_fn, key=key, S=S, t=t)
+        with open(LOG_FILE, 'a') as flog:
+            print(f'{key} decay1ms {decay_ms}', file=flog)
+        print(f'{ent_fn} decay1ms {decay_ms}')
+    except Exception as ex:
+        print(ex)

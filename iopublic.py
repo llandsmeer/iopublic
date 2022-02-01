@@ -71,6 +71,10 @@ class TunedIOModel(arbor.recipe):
         '''
         arbor.recipe.__init__(self)
         self.neurons = network_json.neurons
+        self.soma = []
+        for neuron in self.neurons:
+            self.soma.append((neuron.x, neuron.y, neuron.z))
+        self.soma = np.array(self.soma)
         # idmap: scaffold id to gid map
         self.idmap = {neuron.old_id:new_id for new_id, neuron in enumerate(self.neurons)}
         self.props = arbor.neuron_cable_properties()
@@ -116,6 +120,16 @@ class TunedIOModel(arbor.recipe):
 
     def event_generators(self, gid):
         if not self.spikes: return []
+        events = []
+        for at, weight in self.spikes.items():
+            if hasattr(weight, 'len') and len(weight) == 5:
+                x, y, z, r, weight = weight
+                nx, ny, nz = self.pos[gid]
+                w0 = np.exp(-((x-nx)**2 + (y-ny)**2 + (z-nz)**2)/r**2)
+                ev = arbor.event_generator('syn', w0 * weight, arbor.explicit_schedule([at]))
+            else:
+                ev = arbor.event_generator('syn', weight, arbor.explicit_schedule([at]))
+            events.append(ev)
         return [
             arbor.event_generator('syn', weight, arbor.explicit_schedule([at]))
             for at, weight in self.spikes.items()]
@@ -233,6 +247,13 @@ def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=()):
     policy = arbor.cv_policy_max_extent(10) | arbor.cv_policy_single('"soma_group"')
     decor.discretization(policy)
     return arbor.cable_cell(tree, labels, decor)
+
+def get_network_for_tuning(selected):
+    fn_tuned = f'tuned_networks/{selected}'
+    tuning = json.load(open(fn_tuned))
+    fn_network = f'{tuning["network"]}.gz'
+    network = load_spacefilling_network(fn_network)
+    return network
 
 def simulate_tuned_network(selected, tfinal=10000, dt=0.025, gpu_id=0, spikes=()):
     #selected = '2021-12-08-shadow_averages_0.01_0.8_d1666304-c6fc-4346-a55d-a99b3aad55be'

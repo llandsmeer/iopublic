@@ -10,6 +10,8 @@
 #SBATCH --time=00:30:00
 #SBATCH --array=0-100
 
-python3 pizdaint_sweep_tunings.py decay2 ${SLURM_ARRAY_TASK_ID}
+module load cray-python
+#python3 pizdaint_sweep_tunings.py decay2 ${SLURM_ARRAY_TASK_ID}
+python3 pizdaint_sweep_tunings.py local1
 
 #partition=debug
