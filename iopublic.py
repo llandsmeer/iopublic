@@ -122,17 +122,15 @@ class TunedIOModel(arbor.recipe):
         if not self.spikes: return []
         events = []
         for at, weight in self.spikes.items():
-            if hasattr(weight, 'len') and len(weight) == 5:
+            if isinstance(weight, (tuple, list)) and len(weight) == 5:
                 x, y, z, r, weight = weight
-                nx, ny, nz = self.pos[gid]
+                nx, ny, nz = self.soma[gid]
                 w0 = np.exp(-((x-nx)**2 + (y-ny)**2 + (z-nz)**2)/r**2)
                 ev = arbor.event_generator('syn', w0 * weight, arbor.explicit_schedule([at]))
             else:
                 ev = arbor.event_generator('syn', weight, arbor.explicit_schedule([at]))
             events.append(ev)
-        return [
-            arbor.event_generator('syn', weight, arbor.explicit_schedule([at]))
-            for at, weight in self.spikes.items()]
+        return events
 
 def mkdecor(mod=()): # mod is read only
     '''

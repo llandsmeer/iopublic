@@ -74,6 +74,7 @@ for sim in sims:
         f = np.load(sim_fn)
         vs = np.array(f['vs'])
         t = np.array(f['t'])
+        key = str(f['key'])
         sim_data = json.loads(base64.urlsafe_b64decode(key))
         first_spike = int(sorted(sim_data['spikes'])[0])
         S = get_entropy(vs)
