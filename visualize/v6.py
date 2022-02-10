@@ -8,6 +8,8 @@ from vispy import app
 import numpy as np
 from vispy.util.transforms import perspective, translate, rotate
 
+SCALE = 250.0
+
 def mesh_neuron(neuron):
     vertices = []
     faces = []
@@ -18,7 +20,7 @@ def mesh_neuron(neuron):
             trace.append((x, y, z))
         trace = np.array(trace)
         if len(trace) >= 3:
-            vv, ff = vispy_tube.mesh_tube(trace, 1.5)
+            vv, ff = vispy_tube.mesh_tube(trace, 4.5)
             faces.append(ff + sum(map(len, vertices)))
             vertices.append(vv)
     if vertices:
@@ -33,26 +35,36 @@ fn_network = '/home/llandsmeer/Repos/llandsmeer/iopublic/networks/7eff83d2-25a6-
 with gzip.open(fn_network) as f:
     network = json.load(f)
 
-vertices = []
-faces = []
-neuron_ids = []
-for i, neuron in enumerate(network['neurons']):
-    #if i % 100 != 0: continue
-    dend = vv, ff = mesh_neuron(neuron)
-    with open(f'mesh/{i}.obj', 'w') as stream:
-        for x, y, z in vv:
-            print(f'v {x:.2f} {y:.2f} {z:.2f}', file=stream)
-        for f in ff:
-            print('f', *(f+1), file=stream)
-    if len(ff) > 0:
-        faces.append(ff + sum(map(len, vertices)))
-        vertices.append(vv)
-        neuron_ids.extend((i,)*len(vv))
-        #neuron_ids.extend((neuron['cluster'],)*len(vv))
-        print(i)
-neuron_ids = np.array(neuron_ids)
-vertices = np.vstack(vertices)
-faces = np.vstack(faces)
+try:
+    f = np.load('saved.npz')
+    vertices = np.array(f['vertices'])
+    faces = np.array(f['faces'])
+    neuron_ids = np.array(f['neuron_ids'])
+    centers = np.array(f['centers'])
+except:
+    vertices = []
+    faces = []
+    neuron_ids = []
+    centers = []
+    for i, neuron in enumerate(network['neurons']):
+        dend = vv, ff = mesh_neuron(neuron)
+        with open(f'mesh/{i}.obj', 'w') as stream:
+            for x, y, z in vv:
+                print(f'v {x:.2f} {y:.2f} {z:.2f}', file=stream)
+            for f in ff:
+                print('f', *(f+1), file=stream)
+        if len(ff) > 0:
+            faces.append(ff + sum(map(len, vertices)))
+            vertices.append(vv)
+            centers.extend(((neuron['x'],neuron['y'],neuron['z']),)*len(vv))
+            neuron_ids.extend((i,)*len(vv))
+            #neuron_ids.extend((neuron['cluster'],)*len(vv))
+            print(i)
+    neuron_ids = np.array(neuron_ids)
+    centers = np.array(centers)
+    vertices = np.vstack(vertices)
+    faces = np.vstack(faces)
+    np.savez_compressed('saved.npz', neuron_ids = neuron_ids, centers = centers, vertices = vertices, faces = faces)
 
 def get_normals(vv, ff):
     vert_normals = np.zeros(vv.shape, np.float32)
@@ -63,13 +75,14 @@ def get_normals(vv, ff):
     norm = np.linalg.norm(vert_normals, axis=1)
     return vert_normals / norm.reshape(-1,1)
 
+tubefact = np.exp(-np.linalg.norm(vertices - centers, axis=1)[faces.flatten()].astype(np.float32)**2 / 30**2)
 neuron_ids = (neuron_ids[faces.flatten()] + 1) / (len(network['neurons']) + 1)
 neuron_ids = neuron_ids.astype(np.float32)
 vert_normals = get_normals(vertices, faces)
 vert_normals = vert_normals[faces.flatten()].astype(np.float32)
 v = vertices[faces.flatten()].astype(np.float32)
 #v = v - v.mean(0)
-v = v / 1000
+v = v / SCALE
 vPosition = v
 
 
@@ -79,6 +92,7 @@ VERT_SHADER = """#version 330
 attribute vec3 a_position;
 attribute vec3 a_normal;
 attribute float neuronid;
+attribute float tubefact;
 uniform   mat4 u_model;
 uniform   mat4 u_view;
 uniform   mat4 u_projection;
@@ -86,18 +100,14 @@ uniform   sampler2D u_tex;
 uniform float time;
 varying out vec3 anormal;
 varying out vec3 fragpos;
-varying out vec3 v_color;
+varying out vec4 v_color;
 void main (void) {
-    fragpos = a_position;
-    //anormal = a_normal;
+    v_color = texture2D(u_tex, vec2(neuronid, time/100.0)).rgba;
+    v_color.a *= tubefact;
+    vec4 pos = u_model * vec4(a_position, 1.0);
+    fragpos = pos.xyz;
     anormal = mat3(transpose(inverse(u_model))) * a_normal;
-    //float r = abs(sin(0.23424*float(neuronid)));
-    //float g = abs(sin(0.63432*float(neuronid)));
-    //float b = abs(sin(0.93423*float(neuronid)));
-    v_color = texture2D(u_tex, vec2(neuronid, time/800.0)).rgb;
-    //v_color = vec3(r, g, b) * (0.8 + 0.2*sin(time*g*3.0));
-    gl_Position = u_view * u_model * vec4(a_position, 1.0);
-    // gl_Position = vec4(a_position, 1.0);
+    gl_Position = u_projection * u_view * pos;
 }
 """
 
@@ -106,7 +116,7 @@ FRAG_SHADER = """ // simple fragment shader
 in vec3 anormal;
 in vec3 fragpos;
 uniform float time;
-varying vec3 v_color;
+varying vec4 v_color;
 void main() {
     float ambientStrength = 0.1;
     vec3 lightPos = vec3(0.0, 500.0, 0.0);
@@ -116,8 +126,8 @@ void main() {
     vec3 lightDir = normalize(lightPos - fragpos);
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * lightColor;
-    vec3 result = (ambient + diffuse) * v_color;
-    gl_FragColor = vec4(result, 1.0);
+    vec4 result = vec4(ambient + diffuse, 1.0) * v_color;
+    gl_FragColor = result;
 }
 """
 
@@ -134,10 +144,10 @@ varying out vec3 fragpos;
 varying out vec3 anormal;
 varying out vec3 v_color;
 void main (void) {
-    fragpos = a_position;
-    anormal = a_normal;
-    //anormal = mat3(transpose(inverse(u_model))) * a_normal;
-    gl_Position = u_view * u_model * vec4(a_position, 1.0);
+    vec4 pos = u_model * vec4(a_position, 1.0);
+    fragpos = pos.xyz;
+    anormal = mat3(transpose(inverse(u_model))) * a_normal;
+    gl_Position = u_projection * u_view * pos;
     v_color = u_color;
 }
 """
@@ -164,10 +174,19 @@ void main() {
 
 #vsoma_color = np.random.random((len(network['neurons']), 10000, 3)).astype(np.float32)
 import matplotlib.pyplot
-cmap = matplotlib.pyplot.get_cmap('viridis')
-vsoma = np.random.random((len(network['neurons']), 1000))
-vsoma_color = cmap((vsoma - vsoma.mean()) / vsoma.std())
+cmap = matplotlib.pyplot.get_cmap('GnBu')
+#cmap = matplotlib.pyplot.get_cmap('hsv')
+#vsoma = np.random.random((len(network['neurons']), 1000))
+vsoma = np.array([ np.linspace(i, (2*i)%1.2+10, 1000)%1 for i in range(len(network['neurons'])) ])
+vsoma = np.tanh((vsoma-0.5)*10)
+x = (vsoma - vsoma.mean()) / vsoma.std()
+x[x<0] = 0
+x[x>1] = 1
+vsoma_color = cmap(x) * 0.5 + 0.5
+#vsoma_color[:,:,3] = 0.3 + 0.7*x**1.5
 vsoma_color = vsoma_color.astype(np.float32)
+
+
 #vsoma_color = np.random.random((1000,1000, 3)).astype(np.float32)
 
 ###
@@ -175,6 +194,7 @@ vsoma_color = vsoma_color.astype(np.float32)
 def load_obj(filename):
     vertices = []
     faces = []
+    normals = []
     with open(filename) as f:
         for line in f:
             parts = line.split()
@@ -183,18 +203,21 @@ def load_obj(filename):
             elif parts[0] == 'v':
                 x, y, z = parts[1:4]
                 vertices.append((float(x), float(y), float(z)))
+            elif parts[0] == 'vn':
+                x, y, z = parts[1:4]
+                normals.append((float(x), float(y), float(z)))
             elif parts[0] == 'f':
                 a, b, c = parts[1:4]
                 a = int(a.split('//')[0]) - 1
                 b = int(b.split('//')[0]) - 1
                 c = int(c.split('//')[0]) - 1
                 faces.append((a, b, c))
-    vertices = np.array(vertices)
+    vertices = np.array(vertices) / SCALE
     faces = np.array(faces)
-    vertices = vertices[faces.flatten()] / 1000.0
-    vertices = vertices.astype(np.float32)
-    normals = get_normals(vertices, faces)
-    normals = vert_normals[faces.flatten()].astype(np.float32)
+    normals = np.array(normals)
+    #normals = get_normals(vertices, faces)
+    vertices = vertices[faces.flatten()].astype(np.float32)
+    normals = normals[faces.flatten()].astype(np.float32)
     return vertices, normals
 
 ###
@@ -207,7 +230,7 @@ class Canvas(app.Canvas):
         # Create program
         self._program = gloo.Program(VERT_SHADER, FRAG_SHADER)
 
-        self.view = translate((0, 0, 0))
+        self.view = translate((0, 0, -5))
         self.model = np.eye(4, dtype=np.float32)
         self.theta = 0
         self.phi = 0
@@ -219,6 +242,7 @@ class Canvas(app.Canvas):
         self._program['a_normal'] = gloo.VertexBuffer(vert_normals)
         self._program['neuronid'] = gloo.VertexBuffer(neuron_ids)
         self._program['u_model'] = self.model
+        self._program['tubefact'] = gloo.VertexBuffer(tubefact)
         self._program['u_view'] = self.view
         self._program['u_projection'] = self.projection
         self._program['u_tex'] = gloo.Texture2D(vsoma_color, wrapping='repeat', interpolation='linear') # repeat
@@ -227,28 +251,28 @@ class Canvas(app.Canvas):
         for filename in glob.glob('../mesh/*.obj'):
             if 'MAO_left' in filename:
                 continue
-            vertices, normals = load_obj(filename)
-            color = np.array([0.6, 0.6, 0.6]) + np.random.random(3) * 0.4
+            mesh_vertices, mesh_normals = load_obj(filename)
+            #color = np.array([0.4, 0.5, 0.6]) + np.random.random(3) * 0.1
+            color = np.array([0.8, 0.8, 0.8]) + np.random.random(3) * 0.1
             program = gloo.Program(MESH_VERT_SHADER, MESH_FRAG_SHADER)
             program['u_color'] = color
-            program['a_position'] = gloo.VertexBuffer(vertices - vPosition.mean(0))
-            program['a_normal'] = gloo.VertexBuffer(normals)
+            program['a_position'] = gloo.VertexBuffer(mesh_vertices - vPosition.mean(0))
+            program['a_normal'] = gloo.VertexBuffer(mesh_normals)
             program['u_model'] = self.model
             program['u_view'] = self.view
             program['u_projection'] = self.projection
             self.programs.append(program)
 
-        gloo.set_clear_color('black')
+        gloo.set_clear_color((0.08, 0.1, 0.1))
 
         self.start = time.time()
         self._timer = app.Timer('auto', connect=self.on_timer, start=True)
         self.show()
 
     def on_timer(self, event):
-        self.theta += .2
         self.phi += .2
-        self.model = np.dot(rotate(self.theta, (0, 1, 0)),
-                            rotate(self.phi,   (0, 0, 1)))
+        self.model = np.dot(rotate(self.phi, (0, 0, 1)),
+                            rotate(90,       (1, 0, 0)))
         self._program['u_model'] = self.model
         for program in self.programs:
             program['u_model'] = self.model
@@ -257,7 +281,7 @@ class Canvas(app.Canvas):
     def on_resize(self, event):
         width, height = event.physical_size
         gloo.set_viewport(0, 0, width, height)
-        self.projection = perspective(45.0, event.size[0] /
+        self.projection = perspective(-45.0, event.size[0] /
                                       float(event.size[1]), 2.0, 10.0)
         self._program['u_projection'] = self.projection
         for program in self.programs:
@@ -268,13 +292,16 @@ class Canvas(app.Canvas):
         # gloo.set_depth_mask(False)
         elapsed = time.time() - self.start
         self._program['time'] = elapsed
+        gloo.clear()
         gloo.gl.glEnable(gloo.gl.GL_DEPTH_TEST)
         gloo.gl.glEnable(0x809d) # msaa
         gloo.gl.glEnable(0x864F) # gl depth clamp
-        gloo.clear()
-        self._program.draw('triangles')
+        gloo.gl.glEnable(gloo.gl.GL_BLEND);
+        gloo.gl.glBlendFunc(gloo.gl.GL_SRC_ALPHA, gloo.gl.GL_ONE_MINUS_SRC_ALPHA);  
+
         for program in self.programs:
             program.draw('triangles')
+        self._program.draw('triangles')
 
 
 if __name__ == '__main__':
