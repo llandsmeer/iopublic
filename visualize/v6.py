@@ -8,19 +8,32 @@ from vispy import app
 import numpy as np
 from vispy.util.transforms import perspective, translate, rotate
 
+import threading
+from queue import Queue
+
 SCALE = 250.0
+
+def moveto(c, n, s):
+    if abs(c - n) < s:
+        return n
+    if c > n:
+        return c - s
+    return c + s
+
 
 def mesh_neuron(neuron):
     vertices = []
     faces = []
     for nt in neuron['traces']:
         trace = []
-        for i, seg in enumerate(nt['trace'][::2]):
+        for i, seg in enumerate(nt['trace']):
             x, y, z = seg['x'], seg['y'], seg['z']
             trace.append((x, y, z))
+            if len(trace) > 20:
+                continue
         trace = np.array(trace)
         if len(trace) >= 3:
-            vv, ff = vispy_tube.mesh_tube(trace, 4.5)
+            vv, ff = vispy_tube.mesh_tube(trace, 10)
             faces.append(ff + sum(map(len, vertices)))
             vertices.append(vv)
     if vertices:
@@ -118,7 +131,8 @@ in vec3 fragpos;
 uniform float time;
 varying vec4 v_color;
 void main() {
-    float ambientStrength = 0.1;
+    // if (fragpos.z > 2.0 || v_color.a < 0.05) { discard; }
+    float ambientStrength = 0.2;
     vec3 lightPos = vec3(0.0, 500.0, 0.0);
     vec3 lightColor = vec3(1.0, 1.0, 1.0);
     vec3 ambient = vec3(1.0, 1.0, 1.0) * ambientStrength;
@@ -127,6 +141,7 @@ void main() {
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * lightColor;
     vec4 result = vec4(ambient + diffuse, 1.0) * v_color;
+    //result.a = 1.0;
     gl_FragColor = result;
 }
 """
@@ -136,13 +151,13 @@ MESH_VERT_SHADER = """#version 330
 // https://learnopengl.com/code_viewer_gh.php?code=src/2.lighting/2.1.basic_lighting_diffuse/2.1.basic_lighting.vs
 attribute vec3 a_position;
 attribute vec3 a_normal;
-uniform   vec3 u_color;
+uniform   vec4 u_color;
 uniform   mat4 u_model;
 uniform   mat4 u_view;
 uniform   mat4 u_projection;
 varying out vec3 fragpos;
 varying out vec3 anormal;
-varying out vec3 v_color;
+varying out vec4 v_color;
 void main (void) {
     vec4 pos = u_model * vec4(a_position, 1.0);
     fragpos = pos.xyz;
@@ -157,8 +172,9 @@ MESH_FRAG_SHADER = """ // simple fragment shader
 in vec3 anormal;
 in vec3 fragpos;
 uniform float time;
-varying vec3 v_color;
+varying vec4 v_color;
 void main() {
+    if (v_color.a < 0.05) { discard; }
     float ambientStrength = 0.1;
     vec3 lightPos = vec3(0.0, 500.0, 0.0);
     vec3 lightColor = vec3(1.0, 1.0, 1.0);
@@ -167,8 +183,8 @@ void main() {
     vec3 lightDir = normalize(lightPos - fragpos);
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * lightColor;
-    vec3 result = (ambient + diffuse) * v_color;
-    gl_FragColor = vec4(result, 1.0);
+    vec4 result = vec4(ambient + diffuse, 1.0) * v_color;
+    gl_FragColor = result;
 }
 """
 
@@ -230,19 +246,28 @@ class Canvas(app.Canvas):
         # Create program
         self._program = gloo.Program(VERT_SHADER, FRAG_SHADER)
 
-        self.view = translate((0, 0, -5))
+        self.view_dist = 8
+        self.view = translate((0, 0, -self.view_dist))
         self.model = np.eye(4, dtype=np.float32)
-        self.theta = 0
+        self.theta = 90
         self.phi = 0
+        self.mesh_alpha = 1
         self.projection = perspective(45.0, self.size[0] /
                                       float(self.size[1]), 2.0, 10.0)
+        self.mode = 0
+        self.angle = 0
+
+        self.tube_triangles = vPosition - vPosition.mean(0)
+        self.tube_normals = vert_normals
+        self.tube_neuron_ids = neuron_ids
+        self.tube_fact = tubefact
 
         # Set uniform and attribute
-        self._program['a_position'] = gloo.VertexBuffer(vPosition - vPosition.mean(0))
-        self._program['a_normal'] = gloo.VertexBuffer(vert_normals)
-        self._program['neuronid'] = gloo.VertexBuffer(neuron_ids)
+        self._program['a_position'] = gloo.VertexBuffer(self.tube_triangles)
+        self._program['a_normal'] = gloo.VertexBuffer(self.tube_normals)
+        self._program['neuronid'] = gloo.VertexBuffer(self.tube_neuron_ids)
+        self._program['tubefact'] = gloo.VertexBuffer(self.tube_fact)
         self._program['u_model'] = self.model
-        self._program['tubefact'] = gloo.VertexBuffer(tubefact)
         self._program['u_view'] = self.view
         self._program['u_projection'] = self.projection
         self._program['u_tex'] = gloo.Texture2D(vsoma_color, wrapping='repeat', interpolation='linear') # repeat
@@ -253,7 +278,8 @@ class Canvas(app.Canvas):
                 continue
             mesh_vertices, mesh_normals = load_obj(filename)
             #color = np.array([0.4, 0.5, 0.6]) + np.random.random(3) * 0.1
-            color = np.array([0.8, 0.8, 0.8]) + np.random.random(3) * 0.1
+            color = np.array([0.8, 0.8, 0.8, 1]) + np.random.random(4) * 0.1
+            color[3] = 1
             program = gloo.Program(MESH_VERT_SHADER, MESH_FRAG_SHADER)
             program['u_color'] = color
             program['a_position'] = gloo.VertexBuffer(mesh_vertices - vPosition.mean(0))
@@ -268,15 +294,65 @@ class Canvas(app.Canvas):
         self.start = time.time()
         self._timer = app.Timer('auto', connect=self.on_timer, start=True)
         self.show()
+        self.counter = 0
+
+        self.reorder_thread = None
+        self.reorder_queue = Queue()
+
+    def on_key_press(self, event):
+        if event.key.name == 'Space':
+            self.mode = (self.mode + 1 ) % 3
+
+    def reorder(self):
+        glpos = (self.projection @ self.view @ self.model) @ np.hstack([
+            self.tube_triangles, np.ones((self.tube_triangles.shape[0], 1))]).T
+        z0 = glpos[3, 0::3]
+        z1 = glpos[3, 1::3]
+        z2 = glpos[3, 2::3]
+        z = np.min([z0, z1, z2], axis=0)
+        o = 3 * z.argsort().repeat(3)
+        o[1::3] += 1
+        o[2::3] += 2
+        a, b, c, d = self.tube_triangles[o], self.tube_normals[o], self.tube_neuron_ids[o], self.tube_fact[o]
+        self.reorder_queue.put((a, b, c, d))
 
     def on_timer(self, event):
+        if self.reorder_thread is None:
+            t = threading.Thread(target=self.reorder)
+            t.start()
+            self.reorder_thread = t
+        if not self.reorder_queue.empty():
+            a, b, c, d = self.reorder_queue.get()
+            self.reorder_thread = None
+            self._program['a_position'].set_data(a)
+            self._program['a_normal'].set_data(b)
+            self._program['neuronid'].set_data(c)
+            self._program['tubefact'].set_data(d)
+        if self.mode == 0:
+            self.angle = moveto(self.angle, 0, 2)
+            self.mesh_alpha = moveto(self.mesh_alpha, 1, 0.04)
+            self.view_dist = moveto(self.view_dist, 9, 0.1)
+        elif self.mode == 1:
+            self.angle = moveto(self.angle, 90, 2)
+            self.mesh_alpha = moveto(self.mesh_alpha, 0, 0.04)
+            self.view_dist = moveto(self.view_dist, 5, 0.1)
+        elif self.mode == 2:
+            self.angle = moveto(self.angle, 90, 2)
+            self.mesh_alpha = moveto(self.mesh_alpha, 0, 0.04)
+            self.view_dist = moveto(self.view_dist, 1, 0.1)
+        self.view = translate((0, 0, -self.view_dist))
         self.phi += .2
-        self.model = np.dot(rotate(self.phi, (0, 0, 1)),
-                            rotate(90,       (1, 0, 0)))
+        self.model = \
+                    rotate(self.angle,(0, 1, 0)) @ \
+                    rotate(self.phi,  (0, 0, 1)) @ \
+                    rotate(self.theta,(1, 0, 0))
         self._program['u_model'] = self.model
+        self._program['u_view'] = self.view
         for program in self.programs:
             program['u_model'] = self.model
+            program['u_view'] = self.view
         self.update()
+        self.counter += 1
 
     def on_resize(self, event):
         width, height = event.physical_size
@@ -288,20 +364,26 @@ class Canvas(app.Canvas):
             program['u_projection'] = self.projection
 
     def on_draw(self, event):
-        # gloo.set_state(blend=True, depth_test=True, polygon_offset_fill=False)
-        # gloo.set_depth_mask(False)
+        gloo.set_state(blend=True, depth_test=True,
+             cull_face=True, blend_func=('src_alpha', 'one_minus_src_alpha'))
         elapsed = time.time() - self.start
         self._program['time'] = elapsed
-        gloo.clear()
-        gloo.gl.glEnable(gloo.gl.GL_DEPTH_TEST)
-        gloo.gl.glEnable(0x809d) # msaa
-        gloo.gl.glEnable(0x864F) # gl depth clamp
-        gloo.gl.glEnable(gloo.gl.GL_BLEND);
-        gloo.gl.glBlendFunc(gloo.gl.GL_SRC_ALPHA, gloo.gl.GL_ONE_MINUS_SRC_ALPHA);  
+        gloo.clear(depth=True, color=True)
+        #gloo.gl.glClear(gloo.gl.GL_COLOR_BUFFER_BIT | gloo.gl.GL_DEPTH_BUFFER_BIT);
+        #gloo.gl.glEnable(gloo.gl.GL_DEPTH_TEST)
+        #gloo.gl.glEnable(0x809d) # msaa
+        #gloo.gl.glEnable(0x864F) # gl depth clamp
 
-        for program in self.programs:
-            program.draw('triangles')
+        #gloo.gl.glDisable(gloo.gl.GL_BLEND);
         self._program.draw('triangles')
+        #gloo.gl.glEnable(gloo.gl.GL_BLEND);
+        #gloo.gl.glBlendFunc(gloo.gl.GL_SRC_ALPHA, gloo.gl.GL_ONE_MINUS_SRC_ALPHA);  
+        gloo.set_state(cull_face=False)
+        for program in self.programs:
+            color = np.array(program['u_color']) 
+            color[3] = self.mesh_alpha
+            program['u_color'] = color
+            program.draw('triangles')
 
 
 if __name__ == '__main__':
