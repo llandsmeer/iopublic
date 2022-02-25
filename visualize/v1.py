@@ -5,19 +5,26 @@ import vispy
 import vispy.scene
 import glob
 from vispy.scene import visuals
+from vispy.util.transforms import perspective, translate, rotate
+from vispy.visuals.transforms import MatrixTransform
 
 class DisplayNetwork:
     def __init__(self, network):
         with gzip.open(network) as f:
-            network = json.load(f)
+            self.network = network = json.load(f)
         self.soma = []
         self.levels = []
         for neuron in network['neurons']:
             x, y, z = neuron['x'], neuron['y'], neuron['z']
-            self.soma.append((x, y, z))
+            self.soma.append((x, y, -z))
+        self.soma = np.array(self.soma)
+        self.center = center = self.soma.mean(0)
+        self.soma -= self.center
+        for neuron in network['neurons']:
             for nt in neuron['traces']:
                 for i, seg in enumerate(nt['trace'][::2]):
                     x, y, z = seg['x'], seg['y'], seg['z']
+                    x, y, z = x - center[0], y - center[0], -z - center[0]
                     if i > 0:
                         while len(self.levels) < i:
                             self.levels.append([])
@@ -27,7 +34,6 @@ class DisplayNetwork:
                     px, py, pz = x, y, z
         for i in range(len(self.levels)):
             self.levels[i] = np.array(self.levels[i])
-        self.soma = np.array(self.soma)
 
     def draw(self, view):
         soma = self.soma
@@ -41,7 +47,7 @@ class DisplayNetwork:
             c = np.exp(-(i+1)/3)
             lines = visuals.Line(connect='segments', antialias=True, width=4*c, color=(0.5, 0.6, 0.7, 0.5 + 0.5*c))
             lines.set_data(level)
-            view.add(lines)
+            #view.add(lines)
 
     def update(self, vals):
         assert len(vals) == len(self.soma)
@@ -49,7 +55,7 @@ class DisplayNetwork:
         self.vis_soma.set_data(self.soma, size=8, edge_width=0, face_color=colors)
 
 class DisplayMesh:
-    def __init__(self, filename):
+    def __init__(self, filename, center=np.zeros(3)):
         vertices = []
         faces = []
         with open(filename) as f:
@@ -59,7 +65,7 @@ class DisplayMesh:
                     continue
                 elif parts[0] == 'v':
                     x, y, z = parts[1:4]
-                    vertices.append((float(x), float(y), float(z)))
+                    vertices.append((float(x), float(y), -float(z)))
                 elif parts[0] == 'f':
                     a, b, c = parts[1:4]
                     a = int(a.split('//')[0]) - 1
@@ -67,8 +73,10 @@ class DisplayMesh:
                     c = int(c.split('//')[0]) - 1
                     faces.append((a, b, c))
         vertices = np.array(vertices)
+        vertices -= center
         faces = np.array(faces)
-        color = np.array([0.6, 0.6, 0.6]) + np.random.random(3) * 0.4
+        color = np.array([0.6, 0.7, 0.8]) + np.random.random(3) * 0.2
+        color = color / 2
         self.mesh = visuals.Mesh(vertices, faces, shading='smooth', color=color)
 
     def draw(self, view):
@@ -78,29 +86,43 @@ vispy.use('Glfw')
 canvas = vispy.scene.SceneCanvas(keys='interactive', show=True)
 view = canvas.central_widget.add_view()
 
-network = '/home/llandsmeer/Repos/llandsmeer/iopublic/networks/7eff83d2-25a6-460d-ac5f-908305cc7a57.json.gz'
-nw = DisplayNetwork(network)
+network_id = '3447248c-68a1-4860-b512-39fa22a5fa86'
+fn_network = f'/home/llandsmeer/Repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
+nw = DisplayNetwork(fn_network)
 nw.draw(view)
 
 #
 
 for mesh in glob.glob('../mesh/*.obj'):
     print(mesh)
-    if 'MAO_left' in mesh:
+    if 'PO_left' in mesh:
         print(mesh)
         continue
-    m = DisplayMesh(mesh)
+    m = DisplayMesh(mesh, center=nw.center)
     m.draw(view)
 
 #
 
+old = view.camera
 view.camera = 'turntable'
 axis = visuals.XYZAxis(parent=view.scene)
 
+phi = 0
+view.camera.distance = 10
+
+y = np.array([n['cluster'] for n in nw.network['neurons']]) / 10
 def update(ev):
+    global phi
     t = ev.elapsed
-    x = 8 * np.linspace(1, 1.5, len(nw.soma)) * t
-    nw.update(0.5 + 0.5*np.sin(x))
+    x = np.linspace(1, 1.5, len(nw.soma))
+    nw.update(0.5 + 0.5*np.sin((x+y)*t))
+    view.camera.elevation = 0
+    view.camera.azimuth = -t * 19
+    print(view.camera.distance)
+#   view.camera.transform = MatrixTransform(
+#           rotate(180,(0, 1, 0)) @
+#           rotate(phi,  (0, 0, 1)) @
+#           rotate(90,(1, 0, 0)))
 
 timer = vispy.app.Timer()
 timer.connect(update)

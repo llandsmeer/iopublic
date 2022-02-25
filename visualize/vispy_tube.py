@@ -21,7 +21,11 @@ def mesh_tube(points, radius=1.0, closed=False, tube_points=8):
 
     # if single radius, convert to list of radii
     if not isinstance(radius, collections.Iterable):
-        radius = [radius] * len(points)
+        r = radius
+        radius = []
+        for i in range(len(points)):
+            radius.append(max(1, r * np.exp(-(i+1)/7)))
+        #radius = [radius] * len(points)
     elif len(radius) != len(points):
         raise ValueError('Length of radii list must match points.')
 

@@ -1,7 +1,10 @@
+import base64
+import glob
 import gzip
 import json
-import glob
+import random
 import time
+import scipy.signal
 import vispy_tube
 from vispy import gloo
 from vispy import app
@@ -43,7 +46,48 @@ def mesh_neuron(neuron):
     else:
         return (), ()
 
-fn_network = '/home/llandsmeer/Repos/llandsmeer/iopublic/networks/7eff83d2-25a6-460d-ac5f-908305cc7a57.json.gz'
+network_id = '3447248c-68a1-4860-b512-39fa22a5fa86'
+fn_network = f'/home/llandsmeer/Repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
+
+vv = []
+for fn in glob.glob('/home/llandsmeer/Data/llandsme/simulations/*.npz'):
+    key = str(np.load(fn)['key'])
+    data = base64.urlsafe_b64decode(key.encode('latin1')).decode('utf8')
+    try:
+        data = json.loads(data)
+    except:
+        continue
+    if network_id in data['selected'] and \
+            '0.01' in data['selected'] and \
+            20000 <= data['tfinal'] <= 50000:
+        vv.append(fn)
+selected = random.choice(vv)
+key = str(np.load(selected)['key'])
+data = base64.urlsafe_b64decode(key.encode('latin1')).decode('utf8')
+print(data)
+f = np.load(selected)
+
+# get phase of oscilation
+vs = f['vs']
+vs = vs[:,3000:]
+s = vs.std(1)
+# m = (s<2) | np.isnan(vs).any(1)
+m = np.isnan(vs).any(1)
+vs = (vs - vs.mean(1)[:,None]) / s[:,None]
+vs[m] = 0
+s[m] = 1
+vs[vs > 2] = 2
+vs[vs < -2] = -2
+sos = scipy.signal.butter(5, (1, 20), 'bp', fs=1000, output='sos')
+filt = scipy.signal.sosfiltfilt(sos, vs)
+analytic = scipy.signal.hilbert(filt - filt.mean())
+amplitude = np.abs(analytic)
+phase = np.angle(analytic) / 2 / np.pi
+amplitude[m] = 0
+phase[m] = 0
+
+print('selected')
+print(data)
 
 with gzip.open(fn_network) as f:
     network = json.load(f)
@@ -115,7 +159,7 @@ varying out vec3 anormal;
 varying out vec3 fragpos;
 varying out vec4 v_color;
 void main (void) {
-    v_color = texture2D(u_tex, vec2(neuronid, time/100.0)).rgba;
+    v_color = texture2D(u_tex, vec2(neuronid, time/200.0)).rgba;
     v_color.a *= tubefact;
     vec4 pos = u_model * vec4(a_position, 1.0);
     fragpos = pos.xyz;
@@ -142,6 +186,7 @@ void main() {
     vec3 diffuse = diff * lightColor;
     vec4 result = vec4(ambient + diffuse, 1.0) * v_color;
     //result.a = 1.0;
+    result.a = result.g * 0.7;
     gl_FragColor = result;
 }
 """
@@ -190,17 +235,15 @@ void main() {
 
 #vsoma_color = np.random.random((len(network['neurons']), 10000, 3)).astype(np.float32)
 import matplotlib.pyplot
-cmap = matplotlib.pyplot.get_cmap('GnBu')
-#cmap = matplotlib.pyplot.get_cmap('hsv')
-#vsoma = np.random.random((len(network['neurons']), 1000))
-vsoma = np.array([ np.linspace(i, (2*i)%1.2+10, 1000)%1 for i in range(len(network['neurons'])) ])
-vsoma = np.tanh((vsoma-0.5)*10)
-x = (vsoma - vsoma.mean()) / vsoma.std()
-x[x<0] = 0
-x[x>1] = 1
-vsoma_color = cmap(x) * 0.5 + 0.5
-#vsoma_color[:,:,3] = 0.3 + 0.7*x**1.5
-vsoma_color = vsoma_color.astype(np.float32)
+from matplotlib import colors as mcolors
+cmap = matplotlib.pyplot.get_cmap('gray')
+##cmap = matplotlib.pyplot.get_cmap('GnBu')
+x = cmap(0.5 + np.sin(phase) / 2)
+x[:,:,0] *= 0.6
+#x[:,:,1] = 1 - np.clip(np.sin(phase + 0) * 0.5, 0, 1)
+x[:,:,2] = np.ones_like(phase)
+x[:,:,:3] = np.clip(x[:,:,:3] * np.clip(amplitude, 1, 2)[..., None], 0, 1)
+vsoma_color = x.astype(np.float32)[:,::2]
 
 
 #vsoma_color = np.random.random((1000,1000, 3)).astype(np.float32)
@@ -274,7 +317,7 @@ class Canvas(app.Canvas):
 
         self.programs = []
         for filename in glob.glob('../mesh/*.obj'):
-            if 'MAO_left' in filename:
+            if 'PO_left' in filename:
                 continue
             mesh_vertices, mesh_normals = load_obj(filename)
             #color = np.array([0.4, 0.5, 0.6]) + np.random.random(3) * 0.1
@@ -317,6 +360,12 @@ class Canvas(app.Canvas):
         self.reorder_queue.put((a, b, c, d))
 
     def on_timer(self, event):
+        if self.phi % 360 > 180:
+            self.mode = 2
+        elif self.phi % 360 > 90:
+            self.mode = 1
+        else:
+            self.mode = 0
         if self.reorder_thread is None:
             t = threading.Thread(target=self.reorder)
             t.start()
@@ -329,7 +378,7 @@ class Canvas(app.Canvas):
             self._program['neuronid'].set_data(c)
             self._program['tubefact'].set_data(d)
         if self.mode == 0:
-            self.angle = moveto(self.angle, 0, 2)
+            self.angle = moveto(self.angle, 180, 2)
             self.mesh_alpha = moveto(self.mesh_alpha, 1, 0.04)
             self.view_dist = moveto(self.view_dist, 9, 0.1)
         elif self.mode == 1:
@@ -337,11 +386,11 @@ class Canvas(app.Canvas):
             self.mesh_alpha = moveto(self.mesh_alpha, 0, 0.04)
             self.view_dist = moveto(self.view_dist, 5, 0.1)
         elif self.mode == 2:
-            self.angle = moveto(self.angle, 90, 2)
+            self.angle = moveto(self.angle, 180, 2)
             self.mesh_alpha = moveto(self.mesh_alpha, 0, 0.04)
-            self.view_dist = moveto(self.view_dist, 1, 0.1)
+            self.view_dist = moveto(self.view_dist, 4, 0.1)
         self.view = translate((0, 0, -self.view_dist))
-        self.phi += .2
+        self.phi += .3
         self.model = \
                     rotate(self.angle,(0, 1, 0)) @ \
                     rotate(self.phi,  (0, 0, 1)) @ \
