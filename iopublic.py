@@ -93,9 +93,10 @@ class TunedIOModel(arbor.recipe):
         return [
                 # just vsoma
                 arbor.cable_probe_membrane_voltage('"root"'),
-                # next 2 are needed for lfpykit
+                # next 3 are needed for lfpykit
                 arbor.cable_probe_membrane_voltage_cell(),
-                arbor.cable_probe_total_current_cell()
+                arbor.cable_probe_total_current_cell(),
+                arbor.cable_probe_stimulus_current_cell(),
                 ]
     def global_properties(self, kind): return self.props
 
@@ -106,7 +107,7 @@ class TunedIOModel(arbor.recipe):
         neuron = self.neurons[gid]
         mod = self.tuning['mods'][gid]
         gjs = self.gap_junctions_on(gid, just_ids=True)
-        cell = make_space_filling_neuron(neuron, mod=dict(mod), gjs=gjs, noise=self.noise, just_tree=True)
+        cell = make_space_filling_neuron(neuron, mod=dict(mod), gjs=gjs, noise=self.noise, ret='tree')
         return cell
 
     def cell_description(self, gid):
@@ -134,16 +135,39 @@ class TunedIOModel(arbor.recipe):
 
     def event_generators(self, gid):
         if not self.spikes: return []
+        #
+        neuron = self.neurons[gid]
+        mod = self.tuning['mods'][gid]
+        gjs = self.gap_junctions_on(gid, just_ids=True)
+        gaba = make_space_filling_neuron(neuron, mod=dict(mod), gjs=gjs, noise=self.noise, ret='gaba')
+        #
         events = []
         for at, weight in self.spikes.items():
-            if isinstance(weight, (tuple, list)) and len(weight) == 5:
+            if isinstance(at, (tuple, list)) and len(at) == 3 and isinstance(weight, (tuple, list)) and len(weight) == 5:
+                freq, start, end = at
                 x, y, z, r, weight = weight
                 nx, ny, nz = self.soma[gid]
-                w0 = np.exp(-((x-nx)**2 + (y-ny)**2 + (z-nz)**2)/r**2)
-                ev = arbor.event_generator('syn', w0 * weight, arbor.explicit_schedule([at]))
+                r2 = ((x-nx)**2 + (y-ny)**2 + (z-nz)**2)
+                if r2 > 4*r**2:
+                    continue
+                w0 = np.exp(-r2/r**2)
+                for syn in gaba:
+                    ev = arbor.event_generator(syn, w0 * weight, arbor.poisson_schedule(start, freq))
+                    events.append(ev)
+            elif isinstance(weight, (tuple, list)) and len(weight) == 5:
+                x, y, z, r, weight = weight
+                nx, ny, nz = self.soma[gid]
+                r2 = ((x-nx)**2 + (y-ny)**2 + (z-nz)**2)
+                if r2 > 4*r**2:
+                    continue
+                w0 = np.exp(-r2/r**2)
+                for syn in gaba:
+                    ev = arbor.event_generator(syn, w0 * weight, arbor.explicit_schedule([at]))
+                    events.append(ev)
             else:
-                ev = arbor.event_generator('syn', weight, arbor.explicit_schedule([at]))
-            events.append(ev)
+                for syn in gaba:
+                    ev = arbor.event_generator(syn, weight, arbor.explicit_schedule([at]))
+                    events.append(ev)
         return events
 
 def mkdecor(mod=()): # mod is read only
@@ -201,12 +225,13 @@ def mkdecor(mod=()): # mod is read only
 
     return decor
 
-def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=(), just_tree=False):
+def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=(), ret='cell'):
     '''Build a single IO cell given a neuron morphology and mechanism params
     '''
     mod = dict(mod)
     tree = arbor.segment_tree()
 
+    '''
     def cable(*, length, radius, parent, tag):
         if isinstance(radius, (float, int)):
             radius = [radius, radius]
@@ -215,21 +240,47 @@ def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=(), just_tree=False)
             arbor.mpoint(x=0, y=0, z=0, radius=radius[0]),
             arbor.mpoint(x=length, y=0, z=0, radius=radius[1]),
             tag=tag)
+    '''
 
-    s = cable(length=12, radius=6, parent=arbor.mnpos, tag=1)
-    a = cable(length=20, radius=[2.5, 1.5], parent=s, tag=2)
+    def cable3d(*, a, b, radius, parent, tag):
+        if isinstance(radius, (float, int)):
+            radius = [radius, radius]
+        return tree.append(
+            parent,
+            arbor.mpoint(x=a[0], y=a[1], z=a[2], radius=radius[0]),
+            arbor.mpoint(x=b[0], y=b[1], z=b[2], radius=radius[1]),
+            tag=tag)
+
+    # s = cable(length=12, radius=6, parent=arbor.mnpos, tag=1)
+    # a = cable(length=20, radius=[2.5, 1.5], parent=s, tag=2)
+    # sample random normal for soma and axon orientation
+    # not for simulation but for lfp calculation
+    # shouldnt matter too much, just as long we don't introduce a bias
+    # by always orienting it in one way
+    normal = np.random.randn(3)
+    normal /= np.linalg.norm(normal, axis=0)
+    soma_pos = np.array([neuron.x, neuron.y, neuron.z])
+    half_soma_end =  6 * normal
+    axon_end = 20 * normal
+    s = cable3d(a=soma_pos-half_soma_end, b=soma_pos+half_soma_end, radius=6, parent=arbor.mnpos, tag=1)
+    a = cable3d(a=soma_pos-half_soma_end, b=soma_pos-half_soma_end-axon_end, radius=[2.5, 1.5], parent=s, tag=2)
 
     segments = list(sorted(neuron.tree, key=lambda seg:seg.seg_id))
     seg_to_cable = {0: s}
 
+    cables = []
     labels = arbor.label_dict()
     for i, seg in enumerate(segments):
         if i == 0:
             continue # soma
         prev_seg = segments[seg.parent]
         prev_cable_id = seg_to_cable[seg.parent]
-        length = math.sqrt((prev_seg.x-seg.x)**2 + (prev_seg.y-seg.y)**2 + (prev_seg.z-seg.z)**2)
-        cable_id = cable(length=length, radius=1, parent=prev_cable_id, tag=3)
+        # length = math.sqrt((prev_seg.x-seg.x)**2 + (prev_seg.y-seg.y)**2 + (prev_seg.z-seg.z)**2)
+        #cable_id = cable(length=length, radius=1, parent=prev_cable_id, tag=3)
+        a = np.array([prev_seg.x, prev_seg.y, prev_seg.z])
+        b = np.array([seg.x, seg.y, seg.z])
+        cable_id = cable3d(a=a, b=b, radius=1, parent=prev_cable_id, tag=3)
+        cables.append(cable_id)
         seg_to_cable[i] = cable_id
         for gj in seg.gj:
             labels[f'gj{gj}'] = f'(on-components 1.0 (segment {cable_id}))'
@@ -250,18 +301,28 @@ def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=(), just_tree=False)
         args = ','.join(f'{k}={v}' for k, v in noise.items())
         decor.paint('"soma_group"', arbor.density(f'ou_noise/{args}'))
 
-    # place a synapse at root - should probably be a dendrite
-    decor.place('"root"', arbor.synapse('expsyn'), 'syn')
-
     for local, peer in gjs:
         decor.place(f'"{local}"', arbor.junction(gj_mech), local)
 
+    # no gaba at soma
+    # gaba = ['gabaroot']
+    # decor.place('"root"', arbor.synapse('expsyn', dict(tau=5, e=-80)), 'gabaroot')
+    gaba = []
+    for i, cable in enumerate(cables):
+        decor.place(f'(on-components 0.5 (segment {cable}))',
+                arbor.synapse('expsyn', dict(tau=5, e=-80)), f'gaba{i}')
+        gaba.append(f'gaba{i}')
+
     policy = arbor.cv_policy_max_extent(10) | arbor.cv_policy_single('"soma_group"')
     decor.discretization(policy)
-    if just_tree:
+    if ret == 'tree':
         return tree
-    else:
+    elif ret == 'gaba':
+        return gaba
+    elif ret == 'cell':
         return arbor.cable_cell(tree, labels, decor)
+    else:
+        assert False
 
 def get_network_for_tuning(selected):
     fn_tuned = f'tuned_networks/{selected}'
