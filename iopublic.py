@@ -81,7 +81,10 @@ class TunedIOModel(arbor.recipe):
         self.props.catalogue.extend(compile_smol_model(), '')
         self.tuning = tuning
         self.ggap = tuning['ggap']
-        self.spikes = dict(spikes)
+        if isinstance(spikes, dict):
+            self.spikes = list(spikes.items())
+        else:
+            self.spikes = list(spikes)
         self.noise = dict(noise)
 
     def cell_kind(self, gid): return arbor.cell_kind.cable
@@ -140,34 +143,36 @@ class TunedIOModel(arbor.recipe):
         mod = self.tuning['mods'][gid]
         gjs = self.gap_junctions_on(gid, just_ids=True)
         gaba = make_space_filling_neuron(neuron, mod=dict(mod), gjs=gjs, noise=self.noise, ret='gaba')
+        ampa_syn = 'ampa_soma'
         #
         events = []
-        for at, weight in self.spikes.items():
-            if isinstance(at, (tuple, list)) and len(at) == 3 and isinstance(weight, (tuple, list)) and len(weight) == 5:
-                freq, start, end = at
-                x, y, z, r, weight = weight
+        for at, weight in self.spikes:
+            if not isinstance(at, (tuple, list)):
+                at = [at]
+            if isinstance(weight, (tuple, list)) and len(weight) == 6:
+                # used
+                x, y, z, r, weight, type = weight
                 nx, ny, nz = self.soma[gid]
                 r2 = ((x-nx)**2 + (y-ny)**2 + (z-nz)**2)
                 if r2 > 4*r**2:
                     continue
                 w0 = np.exp(-r2/r**2)
-                for syn in gaba:
-                    ev = arbor.event_generator(syn, w0 * weight, arbor.poisson_schedule(start, freq))
+                if type == 'gaba':
+                    for syn in gaba:
+                        ev = arbor.event_generator(syn, w0 * weight, arbor.explicit_schedule(at))
+                        events.append(ev)
+                elif type == 'ampa':
+                    ev = arbor.event_generator(ampa_syn, w0 * weight, arbor.explicit_schedule(at))
                     events.append(ev)
-            elif isinstance(weight, (tuple, list)) and len(weight) == 5:
-                x, y, z, r, weight = weight
-                nx, ny, nz = self.soma[gid]
-                r2 = ((x-nx)**2 + (y-ny)**2 + (z-nz)**2)
-                if r2 > 4*r**2:
-                    continue
-                w0 = np.exp(-r2/r**2)
-                for syn in gaba:
-                    ev = arbor.event_generator(syn, w0 * weight, arbor.explicit_schedule([at]))
-                    events.append(ev)
+                else:
+                    print('UNKNOWN TARGET SYNAPSE', type)
+                continue
             else:
                 for syn in gaba:
-                    ev = arbor.event_generator(syn, weight, arbor.explicit_schedule([at]))
+                    ev = arbor.event_generator(syn, weight, arbor.explicit_schedule(at))
                     events.append(ev)
+                continue
+            print('ERROR! IGNORING SPIKE!', at, weight)
         return events
 
 def mkdecor(mod=()): # mod is read only
@@ -307,10 +312,13 @@ def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=(), ret='cell'):
     # no gaba at soma
     # gaba = ['gabaroot']
     # decor.place('"root"', arbor.synapse('expsyn', dict(tau=5, e=-80)), 'gabaroot')
+    # O'Donnell v.Rossum 2011 J. Neurosci 5ns/1mum3
+    decor.place(f'"root"', arbor.synapse('exp2syn', dict(tau1=0.18, tau2=1.8, e=0)), f'ampa_soma') # Cian McDonnel et al 2012
     gaba = []
     for i, cable in enumerate(cables):
+        # fast gaba
         decor.place(f'(on-components 0.5 (segment {cable}))',
-                arbor.synapse('expsyn', dict(tau=5, e=-80)), f'gaba{i}')
+                arbor.synapse('exp2syn', dict(tau1=3, tau2=10, e=-75)), f'gaba{i}') # -70 from Devor and Yarom, 2002 // -75 from Loyola et al (2021?) with 625m opto in CN
         gaba.append(f'gaba{i}')
 
     policy = arbor.cv_policy_max_extent(10) | arbor.cv_policy_single('"soma_group"')
