@@ -16,6 +16,7 @@ import numpy as np
 import arbor
 
 ARBOR_BUILD_CATALOGUE = 'arbor-build-catalogue'
+SMOL_MODEL_DIR = 'smol_model'
 
 def compile_smol_model():
     '''Builds the Inferior Olive mechanisms in the smol_model directory
@@ -23,21 +24,22 @@ def compile_smol_model():
     If we don't need to rebuild because the mod file have not changed we
     do not recompile. An arbor catalogue for the smol model is returned.
     '''
+    dir = SMOL_MODEL_DIR
     if hasattr(arbor, 'smol_catalogue'):
         # if you are using a local copy
         return arbor.smol_catalogue()
     import glob
     import subprocess
-    expected_fn = './smol-catalogue.so'
+    expected_fn = f'./{dir}-catalogue.so'
     if os.path.exists(expected_fn):
         needs_recompile = False
-        for src in glob.glob('smol_model/*.mod'):
+        for src in glob.glob(f'{dir}/*.mod'):
             if os.path.getmtime(src) > os.path.getmtime(expected_fn):
                 print(src, 'is newer than compiled library')
                 needs_recompile = True
         if not needs_recompile:
             return arbor.load_catalogue(expected_fn)
-    res = subprocess.getoutput(f'{ARBOR_BUILD_CATALOGUE} -g cuda smol smol_model')
+    res = subprocess.getoutput(f'{ARBOR_BUILD_CATALOGUE} -g cuda {dir} {dir}')
     path = res.split()[-1]
     print(res)
     assert path[0] == '/' and path.endswith('.so')
@@ -78,7 +80,8 @@ class TunedIOModel(arbor.recipe):
         # idmap: scaffold id to gid map
         self.idmap = {neuron.old_id:new_id for new_id, neuron in enumerate(self.neurons)}
         self.props = arbor.neuron_cable_properties()
-        self.props.catalogue.extend(compile_smol_model(), '')
+        smol_cat = compile_smol_model()
+        self.props.catalogue.extend(smol_cat, '')
         self.tuning = tuning
         self.ggap = tuning['ggap']
         if isinstance(spikes, dict):
@@ -86,6 +89,8 @@ class TunedIOModel(arbor.recipe):
         else:
             self.spikes = list(spikes)
         self.noise = dict(noise)
+        # nmlcc renames gmax to conductance:
+        self.gmax_key = 'gmax' if 'gmax' in smol_cat['cal'].parameters else 'conductance'
 
     def cell_kind(self, gid): return arbor.cell_kind.cable
     def connections_on(self, gid): return []
@@ -110,14 +115,14 @@ class TunedIOModel(arbor.recipe):
         neuron = self.neurons[gid]
         mod = self.tuning['mods'][gid]
         gjs = self.gap_junctions_on(gid, just_ids=True)
-        cell = make_space_filling_neuron(neuron, mod=dict(mod), gjs=gjs, noise=self.noise, ret='tree')
+        cell = make_space_filling_neuron(neuron, gmax_key=self.gmax_key, mod=dict(mod), gjs=gjs, noise=self.noise, ret='tree')
         return cell
 
     def cell_description(self, gid):
         neuron = self.neurons[gid]
         mod = self.tuning['mods'][gid]
         gjs = self.gap_junctions_on(gid, just_ids=True)
-        cell = make_space_filling_neuron(neuron, mod=dict(mod), gjs=gjs, noise=self.noise)
+        cell = make_space_filling_neuron(neuron, gmax_key=self.gmax_key, mod=dict(mod), gjs=gjs, noise=self.noise)
         return cell
 
     def num_gap_junction_sites(self, gid):
@@ -142,7 +147,7 @@ class TunedIOModel(arbor.recipe):
         neuron = self.neurons[gid]
         mod = self.tuning['mods'][gid]
         gjs = self.gap_junctions_on(gid, just_ids=True)
-        gaba = make_space_filling_neuron(neuron, mod=dict(mod), gjs=gjs, noise=self.noise, ret='gaba')
+        gaba = make_space_filling_neuron(neuron, gmax_key=self.gmax_key, mod=dict(mod), gjs=gjs, noise=self.noise, ret='gaba')
         ampa_syn = 'ampa_soma'
         #
         events = []
@@ -175,7 +180,7 @@ class TunedIOModel(arbor.recipe):
             print('ERROR! IGNORING SPIKE!', at, weight)
         return events
 
-def mkdecor(mod=()): # mod is read only
+def mkdecor(mod=(), gmax_key='gmax'): # mod is read only
     '''
     mod keys can be things like
 
@@ -194,7 +199,7 @@ def mkdecor(mod=()): # mod is read only
     def mech(group, name, value, alt_name=False):
         gmax = mod.pop(name, value)*mod.pop(f'scal_{alt_name or name}', 1)
         mechname = mod.pop(f'overide_{alt_name or name}', name)
-        params = dict(gmax=gmax)
+        params = {gmax_key: gmax}
         prefix = f'{alt_name or name}.'
         extra_params = set(k for k in mod if k.startswith(prefix))
         for k in extra_params:
@@ -215,7 +220,7 @@ def mkdecor(mod=()): # mod is read only
     mech(AXON, 'k',    0.200)
     #decor.paint('"all"', arbor.mechanism('ca_conc'))
     decor.paint('"dendrite_group"', arbor.density('ca_conc'))
-    decor.paint('"all"', arbor.density('leak', dict(gmax=mod.pop('scal_leak', 1)*mod.pop('leak', 1.3e-05)  )))
+    decor.paint('"all"', arbor.density('leak', {gmax_key: mod.pop('scal_leak', 1)*mod.pop('leak', 1.3e-05)} ))
     decor.set_property(cm=0.01) # F/m2
     Vm = mod.pop('Vm', -65)
     Vdend = mod.pop('Vdend', Vm)
@@ -230,7 +235,7 @@ def mkdecor(mod=()): # mod is read only
 
     return decor
 
-def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=(), ret='cell'):
+def make_space_filling_neuron(neuron, gmax_key, mod=(), gjs=(), noise=(), ret='cell'):
     '''Build a single IO cell given a neuron morphology and mechanism params
     '''
     mod = dict(mod)
@@ -300,7 +305,7 @@ def make_space_filling_neuron(neuron, mod=(), gjs=(), noise=(), ret='cell'):
 
     gj_mech = mod.pop('gj', 'cx36')
 
-    decor = mkdecor(mod)
+    decor = mkdecor(mod, gmax_key=gmax_key)
 
     if noise != {'sigma': 0}:
         args = ','.join(f'{k}={v}' for k, v in noise.items())
