@@ -4,6 +4,8 @@ import numpy as np
 import glob
 import vispy_tube
 from multiprocessing import Pool
+from vispy.geometry import create_sphere
+import collections
 
 NPROC = 12
 
@@ -12,12 +14,13 @@ def mesh_neuron(neuron):
     faces = []
     for nt in neuron['traces']:
         trace = []
+        trace.append((neuron['x'], neuron['y'], neuron['z']))
         for i, seg in enumerate(nt['trace'][::2]):
             x, y, z = seg['x'], seg['y'], seg['z']
             trace.append((x, y, z))
         trace = np.array(trace)
         if len(trace) >= 3:
-            vv, ff = vispy_tube.mesh_tube(trace)
+            vv, ff = vispy_tube.mesh_tube(trace, 3)
             faces.append(ff + sum(map(len, vertices)))
             vertices.append(vv)
     if vertices:
@@ -35,20 +38,39 @@ def initializer(fn_network):
 
 def worker(worker_id):
     res = []
+    soma_data = create_sphere()
+    vv_soma, ff_soma = soma_data.get_vertices(), soma_data.get_faces()
+    per_cluster = collections.defaultdict(list)
     for i, neuron in enumerate(network['neurons']):
-        if i % NPROC == worker_id:
-            dend = vv, ff = mesh_neuron(neuron)
-            res.append((i, dend))
-            with open(f'mesh/{i}.obj', 'w') as stream:
+        c = neuron['cluster']
+        if c % NPROC != worker_id:
+            continue
+        dend = vv_dend, ff_dend = mesh_neuron(neuron)
+        res.append((i, dend))
+        somapos = np.array([neuron['x'], neuron['y'], neuron['z']])
+        vv = np.vstack([vv_dend, vv_soma * 5 + somapos])
+        ff = np.vstack([ff_dend, ff_soma + len(vv_dend)])
+        with open(f'mesh/c{c:03d}_n{i:04d}.obj', 'w') as stream:
+            for x, y, z in vv:
+                print(f'v {x:.2f} {y:.2f} {z:.2f}', file=stream)
+            for f in ff:
+                print('f', *(f+1), file=stream)
+        per_cluster[c].append((vv, ff))
+    for cluster, meshes in per_cluster.items():
+        with open(f'mesh/c{cluster:03d}_all.obj', 'w') as stream:
+            offset = 0
+            for vv, ff in meshes:
                 for x, y, z in vv:
                     print(f'v {x:.2f} {y:.2f} {z:.2f}', file=stream)
                 for f in ff:
-                    print('f', *(f+1), file=stream)
+                    print('f', *(f+1+offset), file=stream)
+                offset += len(vv)
 
     return res
 
 if __name__ == '__main__':
-    fn_network = '/home/llandsmeer/Repos/llandsmeer/iopublic/networks/7eff83d2-25a6-460d-ac5f-908305cc7a57.json.gz'
+    network_id = 'ada2023a-4377-409b-a5ce-02b6768ffe41'
+    fn_network = f'/home/llandsmeer/Repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
 
     out = []
     with Pool(NPROC, initializer, (fn_network,)) as pool:

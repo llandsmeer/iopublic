@@ -1,0 +1,25 @@
+#!/bin/bash -l
+#
+#SBATCH --job-name="full"
+#SBATCH --nodes=1
+#SBATCH --constraint=gpu
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=12
+#SBATCH --output=log/full.%j_%A-%a.o
+#SBATCH --error=log/full.%j_%A-%a.e
+#SBATCH --account=ich033
+#SBATCH --time=15:00:00
+#SBATCH --mem=60G
+#SBATCH --array=0-65
+
+export PATH="$HOME/.local/bin:$PATH"
+export PYTHONPATH=/store/hbp/ich033/llandsme/arbor/build/python
+
+#module load cray-python
+module load cray-python/3.8.2.1
+
+#python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} none
+python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} gaba
+#python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} gaba_ampa
+
+#partition=debug
