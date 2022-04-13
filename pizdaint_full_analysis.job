@@ -19,7 +19,9 @@ export PYTHONPATH=/store/hbp/ich033/llandsme/arbor/build/python
 module load cray-python/3.8.2.1
 
 #python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} none
-python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} gaba
+python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} spike1s
+python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} gaba_spike1s
+#python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} gaba
 #python3 pizdaint_full_analysis.py ${SLURM_ARRAY_TASK_ID} gaba_ampa
 
 #partition=debug

@@ -72,6 +72,38 @@ elif experiment == 'local2':
             5000: (x1, y1, z1, r, 0.01)
         }
     )
+elif experiment == 'long':
+    selected = '2021-12-08-shadow_averages_0.01_0.5_3447248c-68a1-4860-b512-39fa22a5fa86'
+    tfinal = int(sys.argv[2])
+    neurons = iopublic.get_network_for_tuning(selected).neurons
+    spikes = {}
+    for i in range(1000, tfinal, 100):
+        r = 50
+        a = np.random.randint(len(neurons))
+        x, y, z = round(neurons[a].x, 1), round(neurons[a].y, 1), round(neurons[a].z, 1)
+        spikes[i] = x, y, z, r, 0.01
+    sim_args = dict(
+        selected=selected,
+        tfinal=tfinal,
+        dt=0.025,
+        gpu_id=0,
+        spikes=spikes
+    )
+elif experiment == 'singlespikeall':
+    i = int(sys.argv[2])
+    tuned_networks = list(sorted(os.listdir(f'tuned_networks')))
+    selected_tuning = tuned_networks[i]
+    sim_args = dict(
+        selected=selected_tuning,
+        tfinal=20000,
+        dt=0.025,
+        gpu_id=0,
+        spikes={
+            50000: 0.05,
+            100000: 0.05,
+            150000: 0.15
+        }
+    )
 else:
     assert False
 

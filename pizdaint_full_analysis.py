@@ -20,10 +20,13 @@ selected = tuned_networks[i]
 
 # selected = '2021-12-08-shadow_averages_0.01_0.8_d1666304-c6fc-4346-a55d-a99b3aad55be'
 
-if len(sys.argv) >= 3:
-    stim = sys.argv[2]
-else:
-    stim = 'none'
+#if len(sys.argv) >= 3:
+    #stim = sys.argv[2]
+#else:
+stim = 'none'
+
+print(stim, sys.argv)
+
 gpu_id = 0
 database_file = '/scratch/snx3000/llandsme/database.h5'
 lock_file = f'{database_file}.lock'
@@ -36,6 +39,7 @@ def lock():
 with lock():
     with h5py.File(database_file, 'a') as f:
         h5key = f'{selected}/{stim}'
+        print('checking', h5key)
         if h5key not in f.keys():
             print('making key', h5key)
             f.create_group(h5key)
@@ -117,6 +121,9 @@ else:
         if 'ampa' in stim:
             at = tuple([at for at in spiketrain(10, tstart, tfinal) if (0 < at % 1000 < 100)])
             spikes.append((at, [tgt.x, tgt.y, tgt.z, 250, 0.005, 'ampa']))
+        if 'spike1s' in stim:
+            at = tuple(range(tstart, tfinal, 1000))
+            spikes.append((at, [0.005, 'ampa']))
     # save spikes
     with lock():
         with h5py.File(database_file, 'a') as f:
