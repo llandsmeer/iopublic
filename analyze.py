@@ -58,30 +58,34 @@ def fit_curve(t, S, time_peak):
 #ENTROPY_DIR = '/store/hbp/ich033/llandsme/analysis/entropy'
 #LOG_FILE = '/store/hbp/ich033/llandsme/analysis.data'
 
-SIM_ROOT = '/scratch/snx3000/llandsme/simulations/'
-ENTROPY_DIR = '/scratch/snx3000/llandsme/analysis/entropy/'
-LOG_FILE = '/scratch/snx3000/llandsme/analysis.data'
+def main():
+    SIM_ROOT = '/scratch/snx3000/llandsme/simulations/'
+    ENTROPY_DIR = '/scratch/snx3000/llandsme/analysis/entropy/'
+    LOG_FILE = '/scratch/snx3000/llandsme/analysis.data'
 
-sims = os.listdir(SIM_ROOT)
+    sims = os.listdir(SIM_ROOT)
 
-for sim in sims:
-    try:
-        key = sim.split('.')[0]
-        sim_fn = os.path.join(SIM_ROOT, sim)
-        ent_fn = os.path.join(ENTROPY_DIR, sim)
-        if os.path.exists(ent_fn):
-            continue
-        f = np.load(sim_fn)
-        vs = np.array(f['vs'])
-        t = np.array(f['t'])
-        key = str(f['key'])
-        sim_data = json.loads(base64.urlsafe_b64decode(key))
-        first_spike = int(sorted(sim_data['spikes'])[0])
-        S = get_entropy(vs)
-        decay_ms = fit_curve(t, S, first_spike)
-        np.savez_compressed(ent_fn, key=key, S=S, t=t)
-        with open(LOG_FILE, 'a') as flog:
-            print(f'{key} decay1ms {decay_ms}', file=flog)
-        print(f'{ent_fn} decay1ms {decay_ms}')
-    except Exception as ex:
-        print(ex)
+    for sim in sims:
+        try:
+            key = sim.split('.')[0]
+            sim_fn = os.path.join(SIM_ROOT, sim)
+            ent_fn = os.path.join(ENTROPY_DIR, sim)
+            if os.path.exists(ent_fn):
+                continue
+            f = np.load(sim_fn)
+            vs = np.array(f['vs'])
+            t = np.array(f['t'])
+            key = str(f['key'])
+            sim_data = json.loads(base64.urlsafe_b64decode(key))
+            first_spike = int(sorted(sim_data['spikes'])[0])
+            S = get_entropy(vs)
+            decay_ms = fit_curve(t, S, first_spike)
+            np.savez_compressed(ent_fn, key=key, S=S, t=t)
+            with open(LOG_FILE, 'a') as flog:
+                print(f'{key} decay1ms {decay_ms}', file=flog)
+            print(f'{ent_fn} decay1ms {decay_ms}')
+        except Exception as ex:
+            print(ex)
+
+if __name__ == '__main__':
+    main()
