@@ -172,7 +172,7 @@ class TunedIOModel(arbor.recipe):
                 else:
                     print('UNKNOWN TARGET SYNAPSE', type)
                 continue
-            elif isinstance(weight, (tuple, list)) and len(weight) == 6:
+            elif isinstance(weight, (tuple, list)) and len(weight) == 2:
                 weight, type = weight
                 if type == 'gaba':
                     for syn in gaba:
