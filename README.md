@@ -2,6 +2,8 @@
 
 Stand alone version of the inferior olive model (without network generation & tuning)
 
+Currently works with Arbor v0.6
+
 ## Example
 
 ```python
