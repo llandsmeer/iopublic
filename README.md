@@ -2,6 +2,8 @@
 
 Stand alone version of the inferior olive model (without network generation & tuning)
 
+Currently works with Arbor v0.6
+
 ## Example
 
 Run a simulation:
@@ -22,3 +24,9 @@ neighbours = [idmap[trace.global_to] for trace in network.neurons[gid].traces]
 # neighbours = [786, 709, 514, 514, 526, 831, 342, 173, 454, 633]
 print(vs[neighbours])
 ```
+
+##  Online version of 3-compartmental IO model
+
+https://llandsmeer.github.io/IOJS/
+
+<a rel="license" href="http://creativecommons.org/licenses/by-nc/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-nc/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-nc/4.0/">Creative Commons Attribution-NonCommercial 4.0 International License</a>.

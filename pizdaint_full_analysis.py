@@ -1,3 +1,15 @@
+import socket
+if socket.gethostname() == 'henkdenktenk':
+    import sys
+    import importlib
+    ARBOR_LOCATION = '/home/lennart/Repos/arbor-sim/arbor/build/python/arbor/__init__.py'
+    spec = importlib.util.spec_from_file_location('arbor', ARBOR_LOCATION)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    import iopublic
+    iopublic.ARBOR_BUILD_CATALOGUE = '/home/lennart/Repos/arbor-sim/arbor/build/arbor-build-catalogue'
+
 import sys
 import os
 import random
@@ -14,21 +26,39 @@ import fasteners
 
 import iopublic
 
-i = int(sys.argv[1])
 tuned_networks = list(sorted(os.listdir(f'tuned_networks')))
+
+if len(sys.argv) == 1:
+    for i, n in enumerate(tuned_networks):
+        print(f'{i:03d} {n}')
+    exit(1)
+
+
+i = int(sys.argv[1])
 selected = tuned_networks[i]
 
 # selected = '2021-12-08-shadow_averages_0.01_0.8_d1666304-c6fc-4346-a55d-a99b3aad55be'
 
-#if len(sys.argv) >= 3:
-    #stim = sys.argv[2]
-#else:
-stim = 'none'
+if len(sys.argv) >= 3:
+    stim = sys.argv[2]
+else:
+    stim = 'none'
 
-print(stim, sys.argv)
+radial_vext_probes = 'probe' in stim
+probe_radius = 10
 
-gpu_id = 0
-database_file = '/scratch/snx3000/llandsme/database.h5'
+if '--gpu1' in sys.argv:
+    gpu_id = 1
+else:
+    gpu_id = 0
+
+print(stim, selected, 'gpu=', gpu_id)
+
+import socket
+if socket.gethostname() == 'henkdenktenk':
+    database_file = '/mnt/Data/llandsmeer/database_v2.h5'
+else:
+    database_file = '/scratch/snx3000/llandsme/database.h5'
 lock_file = f'{database_file}.lock'
 tfinal = 25000
 dt = 0.005
@@ -118,12 +148,27 @@ else:
         if 'gaba' in stim:
             at = tuple([at for at in spiketrain(100, tstart-500, tfinal) if not (0 < at % 1000 < 100)])
             spikes.append((at, [tgt.x, tgt.y, tgt.z, 75, 0.0000005, 'gaba']))
+        if 'ghalf' in stim: # gaba
+            at = tuple([at for at in spiketrain(100, tstart-500, tfinal) if not (0 < at % 4000 < 2000)])
+            spikes.append((at, [tgt.x, tgt.y, tgt.z, 75, 0.0000005, 'gaba']))
         if 'ampa' in stim:
             at = tuple([at for at in spiketrain(10, tstart, tfinal) if (0 < at % 1000 < 100)])
             spikes.append((at, [tgt.x, tgt.y, tgt.z, 250, 0.005, 'ampa']))
-        if 'spike1s' in stim:
+        if 'spike1target' in stim:
             at = tuple(range(tstart, tfinal, 1000))
-            spikes.append((at, [0.005, 'ampa']))
+            at = tuple([t + np.random.poisson(20) for t in at])
+            spikes.append((at, [tgt.x, tgt.y, tgt.z, 250, 0.005, 'ampa']))
+        if 'figure2c' in stim:
+            at = tuple(range(tstart, tfinal, 1000))
+            at = tuple([t + np.random.beta(1.8, 20)*400 for t in at])
+            spikes.append((at, [tgt.x, tgt.y, tgt.z, 250, 0.01, 'ampa']))
+        if 'spike2full' in stim:
+            at = tuple(range(tstart, tfinal, 1000))
+            at = tuple([t + np.random.poisson(20) for t in at])
+            spikes.append((at, [0.0005*np.random.random(), 'ampa']))
+    if 'spike1s' in stim:
+        at = tuple(range(tstart, tfinal, 1000))
+        spikes.append((at, [0.005, 'ampa']))
     # save spikes
     with lock():
         with h5py.File(database_file, 'a') as f:
@@ -165,6 +210,13 @@ else:
 
     Xplane, Yplane = np.meshgrid(sx, sy)
     X, Y, Z = (e[0]*Xplane.reshape(-1, 1) + e[1]*Yplane.reshape(-1, 1) + e[2]*z0).T
+    if radial_vext_probes:
+        X = np.array([ -613, -498,  -153,  -38,  -500, -500,   -500, -500])
+        Y = np.array([-1173, -1173, -933, -813, -1000, -1000, -1000, -1000])
+        Z = np.array([1200,  1200,  1200, 1200,  1200,  1000,  8000,  6000])
+        X = np.concatenate([X+probe_radius*np.cos(i/8*2*np.pi) for i in range(8)])
+        Y = np.concatenate([Y+probe_radius*np.sin(i/8*2*np.pi) for i in range(8)])
+        Z = np.concatenate([Z for i in range(8)])
     lsps = []
     Ms = []
     geometries = []
