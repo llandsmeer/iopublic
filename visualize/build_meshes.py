@@ -1,9 +1,15 @@
+
+print('')
+
 import gzip
 import json
 import numpy as np
 import glob
 import vispy_tube
 from multiprocessing import Pool
+import collections
+import collections.abc
+collections.Iterable = collections.abc.Iterable
 from vispy.geometry import create_sphere
 import collections
 
@@ -65,13 +71,20 @@ def worker(worker_id):
                 for f in ff:
                     print('f', *(f+1+offset), file=stream)
                 offset += len(vv)
-
+    offset = 0
+    with open(f'mesh/worker{worker_id}_all.obj', 'w') as stream:
+        for cluster, meshes in per_cluster.items():
+            for vv, ff in meshes:
+                for x, y, z in vv:
+                    print(f'v {x:.2f} {y:.2f} {z:.2f}', file=stream)
+                for f in ff:
+                    print('f', *(f+1+offset), file=stream)
+                offset += len(vv)
     return res
 
 if __name__ == '__main__':
     network_id = 'ada2023a-4377-409b-a5ce-02b6768ffe41'
-    fn_network = f'/home/llandsmeer/Repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
-
+    fn_network = f'/home/llandsmeer/repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
     out = []
     with Pool(NPROC, initializer, (fn_network,)) as pool:
         for part in pool.map(worker, range(NPROC)):

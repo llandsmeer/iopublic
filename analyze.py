@@ -18,16 +18,20 @@ def get_analytical(vsall):
     analytic = scipy.signal.hilbert(filt - filt.mean())
     return np.angle(analytic)
 
-def get_entropy(vsall):
+def get_entropy(vsall, spike=None):
     tmp_phase = get_analytical(vsall)
     tmp_entropies = []
     #tmp_time = []
 
     #par_time_of_spike = list(recipe.spikes.keys())[0]
 
-    for i in range(0, tmp_phase.shape[1]):
-    #for i in range(par_time_of_spike-500, par_time_of_spike+2000): # just the spike
-        if 0: # phase differences
+    if spike is None:
+        r = range(0, tmp_phase.shape[1])
+    else:
+        r = range(5000-500, 5000+2000)
+
+    for i in r: # just the spike
+        if 1: # phase differences
             delta = tmp_phase[:,i,None] - tmp_phase[None,:,i]
             delta = (delta[np.triu_indices(len(delta), k = 1)] + np.pi) % (2*np.pi) - np.pi
         else: # just the phase

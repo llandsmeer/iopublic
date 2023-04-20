@@ -1,3 +1,6 @@
+import sys
+sys.path.append('/home/llandsmeer/repos/llandsmeer/iopublic/visualize')
+
 import base64
 import glob
 import gzip
@@ -9,7 +12,14 @@ import vispy_tube
 from vispy import gloo
 from vispy import app
 import numpy as np
+
+# monkey patch that
+import collections
+import collections.abc
+collections.Iterable = collections.abc.Iterable
+
 from vispy.util.transforms import perspective, translate, rotate
+
 
 import threading
 from queue import Queue
@@ -46,11 +56,11 @@ def mesh_neuron(neuron):
     else:
         return (), ()
 
-network_id = '3447248c-68a1-4860-b512-39fa22a5fa86'
-fn_network = f'/home/llandsmeer/Repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
 
 vv = []
 for fn in glob.glob('/home/llandsmeer/Data/llandsme/simulations/*.npz'):
+    network_id = '3447248c-68a1-4860-b512-39fa22a5fa86'
+    fn_network = f'/home/llandsmeer/Repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
     key = str(np.load(fn)['key'])
     data = base64.urlsafe_b64decode(key.encode('latin1')).decode('utf8')
     try:
@@ -61,15 +71,28 @@ for fn in glob.glob('/home/llandsmeer/Data/llandsme/simulations/*.npz'):
             '0.01' in data['selected'] and \
             20000 <= data['tfinal'] <= 50000:
         vv.append(fn)
-selected = random.choice(vv)
-key = str(np.load(selected)['key'])
-data = base64.urlsafe_b64decode(key.encode('latin1')).decode('utf8')
-print(data)
-f = np.load(selected)
+if vv:
+    selected = random.choice(vv)
+    key = str(np.load(selected)['key'])
+    data = base64.urlsafe_b64decode(key.encode('latin1')).decode('utf8')
+    print('selected')
+    print(data)
+    f = np.load(selected)
+    vs = f['vs']
+    vs = vs[:,3000:]
+else:
+    network_id = 'ada2023a-4377-409b-a5ce-02b6768ffe41'
+    fn = '/home/llandsmeer/data/iopublic/henkdenktenk_database_v2.h5'
+    import h5py
+    with h5py.File(fn, 'r') as f:
+        selected = random.choice([k for k in f.keys() if network_id in k])
+        print(f[selected].keys())
+        vs = np.array(f[selected]['spike1s_gaba']['vsall'])
+    print(selected)
+    #network_id = selected.split('_')[-1]
+    fn_network = f'/home/llandsmeer/repos/llandsmeer/iopublic/networks/{network_id}.json.gz'
 
 # get phase of oscilation
-vs = f['vs']
-vs = vs[:,3000:]
 s = vs.std(1)
 # m = (s<2) | np.isnan(vs).any(1)
 m = np.isnan(vs).any(1)
@@ -86,8 +109,6 @@ phase = np.angle(analytic) / 2 / np.pi
 amplitude[m] = 0
 phase[m] = 0
 
-print('selected')
-print(data)
 
 with gzip.open(fn_network) as f:
     network = json.load(f)
@@ -155,9 +176,9 @@ uniform   mat4 u_view;
 uniform   mat4 u_projection;
 uniform   sampler2D u_tex;
 uniform float time;
-varying out vec3 anormal;
-varying out vec3 fragpos;
-varying out vec4 v_color;
+out vec3 anormal;
+out vec3 fragpos;
+out vec4 v_color;
 void main (void) {
     v_color = texture2D(u_tex, vec2(neuronid, time/200.0)).rgba;
     v_color.a *= tubefact;
@@ -170,8 +191,8 @@ void main (void) {
 
 FRAG_SHADER = """ // simple fragment shader
 // https://learnopengl.com/code_viewer_gh.php?code=src/2.lighting/2.1.basic_lighting_diffuse/2.1.basic_lighting.fs
-in vec3 anormal;
-in vec3 fragpos;
+vec3 anormal;
+vec3 fragpos;
 uniform float time;
 varying vec4 v_color;
 void main() {
@@ -200,9 +221,9 @@ uniform   vec4 u_color;
 uniform   mat4 u_model;
 uniform   mat4 u_view;
 uniform   mat4 u_projection;
-varying out vec3 fragpos;
-varying out vec3 anormal;
-varying out vec4 v_color;
+out vec3 fragpos;
+out vec3 anormal;
+out vec4 v_color;
 void main (void) {
     vec4 pos = u_model * vec4(a_position, 1.0);
     fragpos = pos.xyz;
@@ -214,8 +235,8 @@ void main (void) {
 
 MESH_FRAG_SHADER = """ // simple fragment shader
 // https://learnopengl.com/code_viewer_gh.php?code=src/2.lighting/2.1.basic_lighting_diffuse/2.1.basic_lighting.fs
-in vec3 anormal;
-in vec3 fragpos;
+vec3 anormal
+vec3 fragpos;
 uniform float time;
 varying vec4 v_color;
 void main() {
